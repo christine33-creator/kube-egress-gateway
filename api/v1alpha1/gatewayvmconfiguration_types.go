@@ -7,6 +7,27 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// GatewayVmProfile configures standalone VMs as gateway nodes.
+// This is a copy of the type from staticgatewayconfiguration_types.go for consistency.
+type GatewayVmProfile struct {
+	// Resource group containing the VMs. Must be in the same subscription.
+	VmResourceGroup string `json:"vmResourceGroup,omitempty"`
+
+	// List of VM names to use as gateways. If empty, VMs will be discovered by nodepool labels.
+	VmNames []string `json:"vmNames,omitempty"`
+
+	// Maximum number of VMs to use as gateways when auto-discovering by nodepool
+	//+kubebuilder:validation:Minimum=1
+	//+kubebuilder:validation:Maximum=100
+	MaxVmCount int32 `json:"maxVmCount,omitempty"`
+
+	// Public IP prefix size. For standalone VMs, this represents the number of IPs needed.
+	// Each VM will get one IP from the prefix.
+	//+kubebuilder:validation:Minimum=28
+	//+kubebuilder:validation:Maximum=31
+	PublicIpPrefixSize int32 `json:"publicIpPrefixSize,omitempty"`
+}
+
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
@@ -20,8 +41,14 @@ type GatewayVMConfigurationSpec struct {
 	GatewayNodepoolName string `json:"gatewayNodepoolName,omitempty"`
 
 	// Profile of the gateway VMSS to apply the gateway configuration.
+	// Mutually exclusive with GatewayVmProfile.
 	// +optional
 	GatewayVmssProfile `json:"gatewayVmssProfile,omitempty"`
+
+	// Profile of standalone VMs to apply the gateway configuration.
+	// Mutually exclusive with GatewayVmssProfile.
+	// +optional
+	GatewayVmProfile `json:"gatewayVmProfile,omitempty"`
 
 	// Whether to provision public IP prefixes for outbound.
 	//+kubebuilder:default=true

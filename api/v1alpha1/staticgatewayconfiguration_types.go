@@ -25,6 +25,26 @@ type GatewayVmssProfile struct {
 	PublicIpPrefixSize int32 `json:"publicIpPrefixSize,omitempty"`
 }
 
+// GatewayVmProfile configures standalone VMs as gateway nodes.
+type GatewayVmProfile struct {
+	// Resource group containing the VMs. Must be in the same subscription.
+	VmResourceGroup string `json:"vmResourceGroup,omitempty"`
+
+	// List of VM names to use as gateways. If empty, VMs will be discovered by nodepool labels.
+	VmNames []string `json:"vmNames,omitempty"`
+
+	// Maximum number of VMs to use as gateways when auto-discovering by nodepool
+	//+kubebuilder:validation:Minimum=1
+	//+kubebuilder:validation:Maximum=100
+	MaxVmCount int32 `json:"maxVmCount,omitempty"`
+
+	// Public IP prefix size. For standalone VMs, this represents the number of IPs needed.
+	// Each VM will get one IP from the prefix.
+	//+kubebuilder:validation:Minimum=28
+	//+kubebuilder:validation:Maximum=31
+	PublicIpPrefixSize int32 `json:"publicIpPrefixSize,omitempty"`
+}
+
 // RouteType defines the type of defaultRoute.
 // +kubebuilder:validation:Enum=azureNetworking;staticEgressGateway
 type RouteType string
@@ -47,8 +67,14 @@ type StaticGatewayConfigurationSpec struct {
 	GatewayNodepoolName string `json:"gatewayNodepoolName,omitempty"`
 
 	// Profile of the gateway VMSS to apply the gateway configuration.
+	// Mutually exclusive with GatewayVmProfile.
 	// +optional
 	GatewayVmssProfile `json:"gatewayVmssProfile,omitempty"`
+
+	// Profile of standalone VMs to apply the gateway configuration.
+	// Mutually exclusive with GatewayVmssProfile.
+	// +optional
+	GatewayVmProfile `json:"gatewayVmProfile,omitempty"`
 
 	// Pod default route, should be either azureNetworking (pod's eth0) or staticEgressGateway (default).
 	//+kubebuilder:default=staticEgressGateway

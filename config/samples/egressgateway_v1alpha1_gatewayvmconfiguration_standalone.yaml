@@ -1,0 +1,22 @@
+apiVersion: egressgateway.kubernetes.azure.com/v1alpha1
+kind: GatewayVMConfiguration
+metadata:
+  labels:
+    app.kubernetes.io/name: gatewayvmconfiguration
+    app.kubernetes.io/instance: gatewayvmconfiguration-standalone-sample
+    app.kubernetes.io/part-of: kube-egress-gateway
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: kube-egress-gateway
+  name: gatewayvmconfiguration-standalone-sample
+spec:
+  gatewayNodepoolName: gwnodepool
+  gatewayVmProfile:
+    vmResourceGroup: my-nodepool-rg
+    # Option 1: Specify VM names explicitly
+    vmNames:
+      - aks-gwnodepool-12345678-000000
+      - aks-gwnodepool-12345678-000001
+    # Option 2: Auto-discover VMs by nodepool (comment out vmNames above)
+    # maxVmCount: 5
+    publicIpPrefixSize: 30  # /30 provides 4 IPs, enough for 2-4 VMs
+  provisionPublicIps: true
