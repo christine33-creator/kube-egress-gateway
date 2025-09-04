@@ -507,3 +507,25 @@ func (az *AzureManager) GetVMNetworkInterface(ctx context.Context, resourceGroup
 	}
 	return nicResp, nil
 }
+
+func (az *AzureManager) UpdateVMNetworkInterface(ctx context.Context, resourceGroup, interfaceName string, nic network.Interface) (*network.Interface, error) {
+	if resourceGroup == "" {
+		resourceGroup = az.ResourceGroup
+	}
+	if interfaceName == "" {
+		return nil, fmt.Errorf("interface name is empty")
+	}
+	logger := log.FromContext(ctx).WithValues("operation", "UpdateVMNetworkInterface", "resourceGroup", resourceGroup, "interfaceName", interfaceName)
+	ctx = log.IntoContext(ctx, logger)
+
+	var retNic *network.Interface
+	err := wrapRetry(ctx, "UpdateVMNetworkInterface", func(ctx context.Context) error {
+		var err error
+		retNic, err = az.InterfaceClient.CreateOrUpdate(ctx, resourceGroup, interfaceName, nic)
+		return err
+	}, isRateLimitError, retrySettings{OverallTimeout: to.Ptr(5 * time.Minute)})
+	if err != nil {
+		return nil, err
+	}
+	return retNic, nil
+}
