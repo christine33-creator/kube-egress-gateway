@@ -340,7 +340,7 @@ func (r *GatewayVMConfigurationReconciler) reconcile(
 type DeploymentMode int
 
 const (
-	VMSSMode       DeploymentMode = iota
+	VMSSMode DeploymentMode = iota
 	StandaloneMode
 	MixedMode
 )
@@ -350,11 +350,11 @@ func (r *GatewayVMConfigurationReconciler) getDeploymentMode(
 	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
 ) (DeploymentMode, error) {
 	logger := log.FromContext(ctx).WithValues("vmConfig", vmConfig.Name)
-	
+
 	// Check the new GatewayProfile structure first
 	hasStandalone := vmConfig.Spec.GatewayProfile.StandaloneVMProfile != nil
-	hasVMSS := vmConfig.Spec.GatewayProfile.VmssProfile != nil || 
-		vmConfig.Spec.GatewayNodepoolName != "" || 
+	hasVMSS := vmConfig.Spec.GatewayProfile.VmssProfile != nil ||
+		vmConfig.Spec.GatewayNodepoolName != "" ||
 		!vmssProfileIsEmptyForVMConfig(vmConfig)
 
 	// If no clear indication in vmConfig, check the parent StaticGatewayConfiguration
@@ -367,7 +367,7 @@ func (r *GatewayVMConfigurationReconciler) getDeploymentMode(
 		if err != nil {
 			return VMSSMode, fmt.Errorf("failed to get StaticGatewayConfiguration: %w", err)
 		}
-		
+
 		hasStandalone = gwConfig.Spec.GatewayProfile.StandaloneVMProfile != nil
 		hasVMSS = gwConfig.Spec.GatewayProfile.VmssProfile != nil
 	}
@@ -483,7 +483,7 @@ func (r *GatewayVMConfigurationReconciler) reconcileMixedMode(
 	vmss, vmssIPPrefixLength, err := r.getGatewayVMSS(ctx, vmConfig)
 	if err == nil {
 		log.Info("Reconciling VMSS component of mixed deployment")
-		
+
 		// Handle VMSS public IP prefix
 		vmssIPPrefix, vmssIPPrefixID, vmssIsManaged, err := r.ensurePublicIPPrefix(ctx, vmssIPPrefixLength, vmConfig)
 		if err != nil {
@@ -518,7 +518,7 @@ func (r *GatewayVMConfigurationReconciler) reconcileMixedMode(
 	standaloneProfile, standaloneIPPrefixLength, err := r.getStandaloneVMProfile(ctx, vmConfig)
 	if err == nil {
 		log.Info("Reconciling standalone VM component of mixed deployment")
-		
+
 		// Handle standalone VM public IP prefix
 		// Note: For mixed deployments, we might want to use the same prefix or separate ones
 		standaloneIPPrefix, standaloneIPPrefixID, standaloneIsManaged, err := r.ensurePublicIPPrefix(ctx, standaloneIPPrefixLength, vmConfig)
@@ -589,7 +589,7 @@ func (r *GatewayVMConfigurationReconciler) reconcileMixedMode(
 		}
 	}
 
-	log.Info("Mixed deployment GatewayVMConfiguration reconciled successfully", 
+	log.Info("Mixed deployment GatewayVMConfiguration reconciled successfully",
 		"vmssIPs", len(allPrivateIPs) > 0,
 		"standaloneIPs", len(allPrivateIPs) > 0,
 		"totalIPs", len(allPrivateIPs))
@@ -1170,7 +1170,7 @@ func (r *GatewayVMConfigurationReconciler) checkRequiredNetworkPorts(
 	// - Outbound internet access on common ports (80, 443, etc.)
 	// - Health probe access (Azure LB health probes use port 8080 by default)
 	// - Cluster communication ports
-	
+
 	// Since we can't easily test connectivity from the controller,
 	// we'll log the requirements for operational awareness
 	logger.Info("Required network ports for egress gateway functionality:",
@@ -1223,7 +1223,7 @@ func (r *GatewayVMConfigurationReconciler) ensureBackendPoolsForMixedDeployment(
 	// Log existing backend pools for visibility
 	for i, pool := range lb.Properties.BackendAddressPools {
 		if pool != nil && pool.Name != nil {
-			logger.Info("Found backend address pool", 
+			logger.Info("Found backend address pool",
 				"index", i,
 				"name", to.Val(pool.Name),
 				"id", to.Val(pool.ID))
@@ -1516,12 +1516,12 @@ func (r *GatewayVMConfigurationReconciler) migrateFromMixedToStandalone(
 
 // StandaloneVMMetrics provides metrics specific to standalone VM gateways
 type StandaloneVMMetrics struct {
-	TotalVMs           int
-	HealthyVMs         int
-	UnhealthyVMs       int
-	ConfiguredIPs      int
-	BackendPoolAssocs  int
-	MigrationCount     int
+	TotalVMs          int
+	HealthyVMs        int
+	UnhealthyVMs      int
+	ConfiguredIPs     int
+	BackendPoolAssocs int
+	MigrationCount    int
 }
 
 // collectStandaloneVMMetrics collects metrics for standalone VM gateways
@@ -1567,7 +1567,7 @@ func (r *GatewayVMConfigurationReconciler) collectStandaloneVMMetrics(
 				if nicRef.Properties != nil && to.Val(nicRef.Properties.Primary) {
 					primaryNicID := to.Val(nicRef.ID)
 					nicName := primaryNicID[strings.LastIndex(primaryNicID, "/")+1:]
-					
+
 					nic, err := r.GetVMNetworkInterface(ctx, standaloneProfile.VMResourceGroup, nicName)
 					if err != nil {
 						logger.V(1).Info("Failed to get NIC for metrics", "nicName", nicName, "error", err)
@@ -1577,7 +1577,7 @@ func (r *GatewayVMConfigurationReconciler) collectStandaloneVMMetrics(
 					// Count IP configurations
 					if nic.Properties != nil && nic.Properties.IPConfigurations != nil {
 						metrics.ConfiguredIPs += len(nic.Properties.IPConfigurations)
-						
+
 						// Count backend pool associations
 						for _, ipConfig := range nic.Properties.IPConfigurations {
 							if ipConfig.Properties != nil && ipConfig.Properties.LoadBalancerBackendAddressPools != nil {
@@ -1618,7 +1618,7 @@ func (r *GatewayVMConfigurationReconciler) performStandaloneVMHealthChecks(
 
 	// Check each VM
 	for _, vmName := range standaloneProfile.VMNames {
-		
+
 		// Check VM existence and status
 		vm, err := r.GetVM(ctx, standaloneProfile.VMResourceGroup, vmName)
 		if err != nil {
@@ -1649,7 +1649,7 @@ func (r *GatewayVMConfigurationReconciler) performStandaloneVMHealthChecks(
 				hasPrimaryNic = true
 				primaryNicID := to.Val(nicRef.ID)
 				nicName := primaryNicID[strings.LastIndex(primaryNicID, "/")+1:]
-				
+
 				// Validate network interface configuration
 				if err := r.validateVMNetworkInterfaceHealth(ctx, vmName, standaloneProfile.VMResourceGroup, nicName); err != nil {
 					healthIssues = append(healthIssues, fmt.Sprintf("VM %s: network interface health issue - %v", vmName, err))
@@ -1695,7 +1695,7 @@ func (r *GatewayVMConfigurationReconciler) validateVMNetworkInterfaceHealth(
 	}
 
 	// Check IP configurations
-	if nic.Properties.IPConfigurations == nil || len(nic.Properties.IPConfigurations) == 0 {
+	if len(nic.Properties.IPConfigurations) == 0 {
 		return fmt.Errorf("network interface has no IP configurations")
 	}
 
