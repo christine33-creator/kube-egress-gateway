@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/publicipprefixclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/subnetclient"
 	_ "sigs.k8s.io/cloud-provider-azure/pkg/azclient/trace"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/virtualmachineclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/virtualmachinescalesetclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azclient/virtualmachinescalesetvmclient"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -103,6 +104,7 @@ type AzureManager struct {
 	LoadBalancerClient   loadbalancerclient.Interface
 	VmssClient           virtualmachinescalesetclient.Interface
 	VmssVMClient         virtualmachinescalesetvmclient.Interface
+	VMClient             virtualmachineclient.Interface
 	PublicIPPrefixClient publicipprefixclient.Interface
 	InterfaceClient      interfaceclient.Interface
 	SubnetClient         subnetclient.Interface
@@ -117,6 +119,7 @@ func CreateAzureManager(cloud *config.CloudConfig, factory azclient.ClientFactor
 	az.VmssClient = factory.GetVirtualMachineScaleSetClient()
 	az.PublicIPPrefixClient = factory.GetPublicIPPrefixClient()
 	az.VmssVMClient = factory.GetVirtualMachineScaleSetVMClient()
+	az.VMClient = factory.GetVirtualMachineClient()
 	az.InterfaceClient = factory.GetInterfaceClient()
 	az.SubnetClient = factory.GetSubnetClient()
 
@@ -418,4 +421,89 @@ func (az *AzureManager) GetSubnet(ctx context.Context) (*network.Subnet, error) 
 		return nil, err
 	}
 	return subnet, nil
+}
+
+// VM operations for standalone VM support
+
+func (az *AzureManager) ListVMs(ctx context.Context, resourceGroup string) ([]*compute.VirtualMachine, error) {
+	if resourceGroup == "" {
+		resourceGroup = az.ResourceGroup
+	}
+	logger := log.FromContext(ctx).WithValues("operation", "ListVMs", "resourceGroup", resourceGroup)
+	ctx = log.IntoContext(ctx, logger)
+	var vmList []*compute.VirtualMachine
+	err := wrapRetry(ctx, "ListVMs", func(ctx context.Context) error {
+		var err error
+		vmList, err = az.VMClient.List(ctx, resourceGroup)
+		return err
+	}, isRateLimitError)
+	if err != nil {
+		return nil, err
+	}
+	return vmList, nil
+}
+
+func (az *AzureManager) GetVM(ctx context.Context, resourceGroup, vmName string) (*compute.VirtualMachine, error) {
+	if resourceGroup == "" {
+		resourceGroup = az.ResourceGroup
+	}
+	if vmName == "" {
+		return nil, fmt.Errorf("VM name is empty")
+	}
+	logger := log.FromContext(ctx).WithValues("operation", "GetVM", "resourceGroup", resourceGroup, "resourceName", vmName)
+	ctx = log.IntoContext(ctx, logger)
+
+	var vm *compute.VirtualMachine
+	err := wrapRetry(ctx, "GetVM", func(ctx context.Context) error {
+		var err error
+		vm, err = az.VMClient.Get(ctx, resourceGroup, vmName, nil)
+		return err
+	}, isRateLimitError)
+	if err != nil {
+		return nil, err
+	}
+	return vm, nil
+}
+
+func (az *AzureManager) UpdateVM(ctx context.Context, resourceGroup, vmName string, vm compute.VirtualMachine) (*compute.VirtualMachine, error) {
+	if resourceGroup == "" {
+		resourceGroup = az.ResourceGroup
+	}
+	if vmName == "" {
+		return nil, fmt.Errorf("VM name is empty")
+	}
+	logger := log.FromContext(ctx).WithValues("operation", "UpdateVM", "resourceGroup", resourceGroup, "resourceName", vmName)
+	ctx = log.IntoContext(ctx, logger)
+
+	var retVM *compute.VirtualMachine
+	err := wrapRetry(ctx, "UpdateVM", func(ctx context.Context) error {
+		var err error
+		retVM, err = az.VMClient.CreateOrUpdate(ctx, resourceGroup, vmName, vm)
+		return err
+	}, isRateLimitError, retrySettings{OverallTimeout: to.Ptr(5 * time.Minute)})
+	if err != nil {
+		return nil, err
+	}
+	return retVM, nil
+}
+
+func (az *AzureManager) GetVMNetworkInterface(ctx context.Context, resourceGroup, interfaceName string) (*network.Interface, error) {
+	if resourceGroup == "" {
+		resourceGroup = az.ResourceGroup
+	}
+	if interfaceName == "" {
+		return nil, fmt.Errorf("interface name is empty")
+	}
+	logger := log.FromContext(ctx).WithValues("operation", "GetVMNetworkInterface", "resourceGroup", resourceGroup, "interfaceName", interfaceName)
+	ctx = log.IntoContext(ctx, logger)
+	var nicResp *network.Interface
+	err := wrapRetry(ctx, "GetVMNetworkInterface", func(ctx context.Context) error {
+		var err error
+		nicResp, err = az.InterfaceClient.Get(ctx, resourceGroup, interfaceName, nil)
+		return err
+	}, isRateLimitError)
+	if err != nil {
+		return nil, err
+	}
+	return nicResp, nil
 }
