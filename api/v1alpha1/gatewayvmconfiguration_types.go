@@ -19,7 +19,12 @@ type GatewayVMConfigurationSpec struct {
 	// +optional
 	GatewayNodepoolName string `json:"gatewayNodepoolName,omitempty"`
 
-	// Profile of the gateway VMSS to apply the gateway configuration.
+	// Gateway profile supporting both VMSS and standalone VMs
+	// +optional
+	GatewayProfile `json:"gatewayProfile,omitempty"`
+
+	// DEPRECATED: Profile of the gateway VMSS to apply the gateway configuration.
+	// Use GatewayProfile.VmssProfile instead. This field will be removed in a future version.
 	// +optional
 	GatewayVmssProfile `json:"gatewayVmssProfile,omitempty"`
 

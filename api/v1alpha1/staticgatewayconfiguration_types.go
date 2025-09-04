@@ -25,6 +25,31 @@ type GatewayVmssProfile struct {
 	PublicIpPrefixSize int32 `json:"publicIpPrefixSize,omitempty"`
 }
 
+// GatewayStandaloneVMProfile defines standalone VM configuration for gateway nodes.
+type GatewayStandaloneVMProfile struct {
+	// Resource group containing the standalone VMs. Must be in the same subscription.
+	VMResourceGroup string `json:"vmResourceGroup,omitempty"`
+
+	// List of standalone VM names to use as gateways
+	VMNames []string `json:"vmNames,omitempty"`
+
+	// Public IP prefix size to be applied to these VMs.
+	//+kubebuilder:validation:Minimum=0
+	//+kubebuilder:validation:Maximum=31
+	PublicIpPrefixSize int32 `json:"publicIpPrefixSize,omitempty"`
+}
+
+// GatewayProfile represents either VMSS or standalone VM configuration for gateway nodes.
+type GatewayProfile struct {
+	// VMSS-based gateway configuration
+	// +optional
+	VmssProfile *GatewayVmssProfile `json:"vmssProfile,omitempty"`
+
+	// Standalone VM-based gateway configuration
+	// +optional
+	StandaloneVMProfile *GatewayStandaloneVMProfile `json:"standaloneVMProfile,omitempty"`
+}
+
 // RouteType defines the type of defaultRoute.
 // +kubebuilder:validation:Enum=azureNetworking;staticEgressGateway
 type RouteType string
@@ -46,7 +71,12 @@ type StaticGatewayConfigurationSpec struct {
 	// +optional
 	GatewayNodepoolName string `json:"gatewayNodepoolName,omitempty"`
 
-	// Profile of the gateway VMSS to apply the gateway configuration.
+	// Gateway profile supporting both VMSS and standalone VMs
+	// +optional
+	GatewayProfile `json:"gatewayProfile,omitempty"`
+
+	// DEPRECATED: Profile of the gateway VMSS to apply the gateway configuration.
+	// Use GatewayProfile.VmssProfile instead. This field will be removed in a future version.
 	// +optional
 	GatewayVmssProfile `json:"gatewayVmssProfile,omitempty"`
 

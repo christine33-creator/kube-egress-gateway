@@ -1,0 +1,17 @@
+apiVersion: egressgateway.kubernetes.azure.com/v1alpha1
+kind: StaticGatewayConfiguration
+metadata:
+  name: standalone-vm-gateway-sample
+spec:
+  gatewayProfile:
+    standaloneVMProfile:
+      vmResourceGroup: my-standalone-vm-rg
+      vmNames:
+        - gateway-vm-1
+        - gateway-vm-2
+      publicIpPrefixSize: 30
+  provisionPublicIps: true
+  defaultRoute: staticEgressGateway
+  excludeCidrs:
+    - 10.244.0.0/16  # Example pod CIDR
+    - 10.0.0.0/16    # Example service CIDR

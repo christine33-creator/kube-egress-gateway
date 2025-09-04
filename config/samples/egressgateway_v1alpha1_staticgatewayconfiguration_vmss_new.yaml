@@ -1,0 +1,15 @@
+apiVersion: egressgateway.kubernetes.azure.com/v1alpha1
+kind: StaticGatewayConfiguration
+metadata:
+  name: vmss-gateway-new-api-sample
+spec:
+  gatewayProfile:
+    vmssProfile:
+      vmssResourceGroup: my-vmss-rg
+      vmssName: gatewaypool1-12345678-vmss
+      publicIpPrefixSize: 31
+  provisionPublicIps: true
+  defaultRoute: staticEgressGateway
+  excludeCidrs:
+    - 10.244.0.0/16  # Example pod CIDR
+    - 10.0.0.0/16    # Example service CIDR
