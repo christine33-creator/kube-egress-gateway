@@ -85,18 +85,16 @@ func (r *GatewayVMConfigurationReconciler) Reconcile(ctx context.Context, req ct
 		}
 		var aggregateError error
 		for _, vmConfig := range vmConfigList.Items {
-			// skip reconciling when
-			// 1. node has agentpool label
-			// 2. vmConfig has GatewayNodepoolName and node agentpool label does not match
-			// or vmConfig is deleting
+			// skip reconciling when vmConfig is deleting
 			if !vmConfig.ObjectMeta.DeletionTimestamp.IsZero() {
 				continue
 			}
-			if v, ok := node.Labels[consts.AKSNodepoolNameLabel]; ok {
-				if npName := vmConfig.Spec.GatewayNodepoolName; npName != "" && !strings.EqualFold(v, npName) {
-					continue
-				}
+
+			// Check if this node matches the vmConfig
+			if !r.nodeMatchesVMConfig(ctx, node, &vmConfig) {
+				continue
 			}
+
 			log.Info(fmt.Sprintf("reconcile vmConfig (%s/%s) upon node (%s) event", vmConfig.GetNamespace(), vmConfig.GetName(), req.Name))
 			if _, err := r.reconcile(ctx, &vmConfig); err != nil {
 				log.Error(err, "failed to reconcile GatewayVMConfiguration")
@@ -147,7 +145,11 @@ func (r *GatewayVMConfigurationReconciler) SetupWithManager(mgr ctrl.Manager) er
 		For(&egressgatewayv1alpha1.GatewayVMConfiguration{}).
 		// allow for node events to trigger reconciliation when either node label matches
 		Watches(&corev1.Node{}, &handler.EnqueueRequestForObject{}, builder.WithPredicates(resourceHasFilterLabel(
-			map[string]string{consts.AKSNodepoolModeLabel: consts.AKSNodepoolModeValue, consts.UpstreamNodepoolModeLabel: "true"}))).
+			map[string]string{
+				consts.AKSNodepoolModeLabel:      consts.AKSNodepoolModeValue,
+				consts.UpstreamNodepoolModeLabel: "true",
+				consts.StandaloneVMNodeModeLabel: consts.StandaloneVMNodeModeValue,
+			}))).
 		Complete(r)
 }
 
@@ -196,6 +198,80 @@ func ifLabelMatch(obj client.Object, m map[string]string) bool {
 	return false
 }
 
+func (r *GatewayVMConfigurationReconciler) nodeMatchesVMConfig(
+	ctx context.Context,
+	node *corev1.Node,
+	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
+) bool {
+	// Check if this is standalone VM mode
+	if r.isStandaloneVMMode(ctx, vmConfig) {
+		return r.nodeMatchesStandaloneVMConfig(ctx, node, vmConfig)
+	} else {
+		return r.nodeMatchesVMSSConfig(ctx, node, vmConfig)
+	}
+}
+
+func (r *GatewayVMConfigurationReconciler) nodeMatchesVMSSConfig(
+	ctx context.Context,
+	node *corev1.Node,
+	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
+) bool {
+	// Original VMSS matching logic
+	if v, ok := node.Labels[consts.AKSNodepoolNameLabel]; ok {
+		if npName := vmConfig.Spec.GatewayNodepoolName; npName != "" && !strings.EqualFold(v, npName) {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func (r *GatewayVMConfigurationReconciler) nodeMatchesStandaloneVMConfig(
+	ctx context.Context,
+	node *corev1.Node,
+	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
+) bool {
+	// Get standalone VM profile
+	vmProfile, _, err := r.getStandaloneVMProfile(ctx, vmConfig)
+	if err != nil {
+		return false
+	}
+
+	// Extract VM name from node - could be from hostname or provider ID
+	vmName := r.getVMNameFromNode(node)
+	if vmName == "" {
+		return false
+	}
+
+	// Check if this VM name is in the configured VM list
+	for _, configuredVM := range vmProfile.VMNames {
+		if strings.EqualFold(vmName, configuredVM) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *GatewayVMConfigurationReconciler) getVMNameFromNode(node *corev1.Node) string {
+	// Try to extract VM name from provider ID first (more reliable)
+	// Azure provider ID format: azure:///subscriptions/{sub-id}/resourceGroups/{rg}/providers/Microsoft.Compute/virtualMachines/{vm-name}
+	if node.Spec.ProviderID != "" {
+		parts := strings.Split(node.Spec.ProviderID, "/")
+		if len(parts) > 0 {
+			// Last part should be the VM name
+			return parts[len(parts)-1]
+		}
+	}
+
+	// Fallback to hostname
+	if hostname, ok := node.Labels["kubernetes.io/hostname"]; ok {
+		return hostname
+	}
+
+	// Last resort - use node name
+	return node.Name
+}
+
 func (r *GatewayVMConfigurationReconciler) reconcile(
 	ctx context.Context,
 	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
@@ -225,6 +301,55 @@ func (r *GatewayVMConfigurationReconciler) reconcile(
 
 	existing := &egressgatewayv1alpha1.GatewayVMConfiguration{}
 	vmConfig.DeepCopyInto(existing)
+
+	// Determine if this is a standalone VM or VMSS configuration
+	if r.isStandaloneVMMode(ctx, vmConfig) {
+		return r.reconcileStandaloneVMMode(ctx, vmConfig, existing)
+	} else {
+		return r.reconcileVMSSMode(ctx, vmConfig, existing)
+	}
+}
+
+func (r *GatewayVMConfigurationReconciler) isStandaloneVMMode(
+	ctx context.Context,
+	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
+) bool {
+	// Check the new GatewayProfile structure first
+	if vmConfig.Spec.GatewayProfile.StandaloneVMProfile != nil {
+		return true
+	}
+
+	// Check if we need to get the configuration from StaticGatewayConfiguration
+	if vmConfig.Spec.GatewayNodepoolName != "" || vmConfig.Spec.GatewayProfile.VmssProfile != nil ||
+		!vmssProfileIsEmptyForVMConfig(vmConfig) {
+		return false
+	}
+
+	// If no clear indication in vmConfig, check the parent StaticGatewayConfiguration
+	gwConfig := &egressgatewayv1alpha1.StaticGatewayConfiguration{}
+	err := r.Get(ctx, client.ObjectKey{
+		Namespace: vmConfig.Namespace,
+		Name:      vmConfig.Name, // VMConfiguration has same name as StaticGatewayConfiguration
+	}, gwConfig)
+	if err != nil {
+		return false // Default to VMSS mode if we can't determine
+	}
+
+	return gwConfig.Spec.GatewayProfile.StandaloneVMProfile != nil
+}
+
+func vmssProfileIsEmptyForVMConfig(vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration) bool {
+	return vmConfig.Spec.GatewayVmssProfile.VmssResourceGroup == "" &&
+		vmConfig.Spec.GatewayVmssProfile.VmssName == "" &&
+		vmConfig.Spec.GatewayVmssProfile.PublicIpPrefixSize == 0
+}
+
+func (r *GatewayVMConfigurationReconciler) reconcileVMSSMode(
+	ctx context.Context,
+	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
+	existing *egressgatewayv1alpha1.GatewayVMConfiguration,
+) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
 
 	vmss, ipPrefixLength, err := r.getGatewayVMSS(ctx, vmConfig)
 	if err != nil {
@@ -268,8 +393,224 @@ func (r *GatewayVMConfigurationReconciler) reconcile(
 	}
 
 	log.Info("GatewayVMConfiguration reconciled")
-	succeeded = true
 	return ctrl.Result{}, nil
+}
+
+func (r *GatewayVMConfigurationReconciler) reconcileStandaloneVMMode(
+	ctx context.Context,
+	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
+	existing *egressgatewayv1alpha1.GatewayVMConfiguration,
+) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// Get standalone VM configuration details
+	vmProfile, ipPrefixLength, err := r.getStandaloneVMProfile(ctx, vmConfig)
+	if err != nil {
+		log.Error(err, "failed to get standalone VM profile")
+		return ctrl.Result{}, err
+	}
+
+	ipPrefix, ipPrefixID, isManaged, err := r.ensurePublicIPPrefix(ctx, ipPrefixLength, vmConfig)
+	if err != nil {
+		log.Error(err, "failed to ensure public ip prefix")
+		return ctrl.Result{}, err
+	}
+
+	var privateIPs []string
+	if privateIPs, err = r.reconcileStandaloneVMs(ctx, vmConfig, vmProfile, ipPrefixID, true); err != nil {
+		log.Error(err, "failed to reconcile standalone VMs")
+		return ctrl.Result{}, err
+	}
+
+	if !isManaged {
+		if err := r.ensurePublicIPPrefixDeleted(ctx, vmConfig); err != nil {
+			log.Error(err, "failed to remove managed public ip prefix")
+			return ctrl.Result{}, err
+		}
+	}
+
+	if vmConfig.Status == nil {
+		vmConfig.Status = &egressgatewayv1alpha1.GatewayVMConfigurationStatus{}
+	}
+	if vmConfig.Spec.ProvisionPublicIps {
+		vmConfig.Status.EgressIpPrefix = ipPrefix
+	} else {
+		vmConfig.Status.EgressIpPrefix = strings.Join(privateIPs, ",")
+	}
+
+	if !equality.Semantic.DeepEqual(existing, vmConfig) {
+		log.Info(fmt.Sprintf("Updating GatewayVMConfiguration %s/%s", vmConfig.Namespace, vmConfig.Name))
+		if err := r.Status().Update(ctx, vmConfig); err != nil {
+			log.Error(err, "failed to update gateway vm configuration")
+		}
+	}
+
+	log.Info("GatewayVMConfiguration reconciled")
+	return ctrl.Result{}, nil
+}
+
+func (r *GatewayVMConfigurationReconciler) getStandaloneVMProfile(
+	ctx context.Context,
+	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
+) (*egressgatewayv1alpha1.GatewayStandaloneVMProfile, int32, error) {
+	// Check if VM config has the profile directly
+	if vmConfig.Spec.GatewayProfile.StandaloneVMProfile != nil {
+		return vmConfig.Spec.GatewayProfile.StandaloneVMProfile,
+			vmConfig.Spec.GatewayProfile.StandaloneVMProfile.PublicIpPrefixSize, nil
+	}
+
+	// Get from parent StaticGatewayConfiguration
+	gwConfig := &egressgatewayv1alpha1.StaticGatewayConfiguration{}
+	err := r.Get(ctx, client.ObjectKey{
+		Namespace: vmConfig.Namespace,
+		Name:      vmConfig.Name,
+	}, gwConfig)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get StaticGatewayConfiguration: %w", err)
+	}
+
+	if gwConfig.Spec.GatewayProfile.StandaloneVMProfile == nil {
+		return nil, 0, fmt.Errorf("no standalone VM profile found")
+	}
+
+	return gwConfig.Spec.GatewayProfile.StandaloneVMProfile,
+		gwConfig.Spec.GatewayProfile.StandaloneVMProfile.PublicIpPrefixSize, nil
+}
+
+func (r *GatewayVMConfigurationReconciler) reconcileStandaloneVMs(
+	ctx context.Context,
+	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
+	vmProfile *egressgatewayv1alpha1.GatewayStandaloneVMProfile,
+	ipPrefixID string,
+	wantIPConfig bool,
+) ([]string, error) {
+	log := log.FromContext(ctx)
+	var privateIPs []string
+
+	// Get load balancer backend pool ID
+	lbBackendpoolID := r.GetLBBackendAddressPoolID("standalone-vms")
+
+	// Reconcile each VM
+	for _, vmName := range vmProfile.VMNames {
+		vm, err := r.GetVM(ctx, vmProfile.VMResourceGroup, vmName)
+		if err != nil {
+			log.Error(err, "failed to get VM", "vmName", vmName)
+			continue
+		}
+
+		privateIP, err := r.reconcileStandaloneVM(ctx, vmConfig, vmName, vm, ipPrefixID, to.Val(lbBackendpoolID), wantIPConfig)
+		if err != nil {
+			log.Error(err, "failed to reconcile VM", "vmName", vmName)
+			return nil, err
+		}
+
+		if wantIPConfig && ipPrefixID == "" {
+			privateIPs = append(privateIPs, privateIP)
+		}
+	}
+
+	// Clean up VMProfiles for deleted VMs
+	var vmprofiles []egressgatewayv1alpha1.GatewayVMProfile
+	if vmConfig.Status != nil {
+		for i := range vmConfig.Status.GatewayVMProfiles {
+			profile := vmConfig.Status.GatewayVMProfiles[i]
+			// Check if this VM is still in the configured VM list
+			for _, vmName := range vmProfile.VMNames {
+				if profile.NodeName == vmName {
+					vmprofiles = append(vmprofiles, profile)
+					break
+				}
+			}
+		}
+		vmConfig.Status.GatewayVMProfiles = vmprofiles
+	}
+
+	err := r.Status().Update(ctx, vmConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update vm config status: %w", err)
+	}
+
+	return privateIPs, nil
+}
+
+func (r *GatewayVMConfigurationReconciler) reconcileStandaloneVM(
+	ctx context.Context,
+	vmConfig *egressgatewayv1alpha1.GatewayVMConfiguration,
+	vmName string,
+	vm *compute.VirtualMachine,
+	ipPrefixID string,
+	lbBackendpoolID string,
+	wantIPConfig bool,
+) (string, error) {
+	logger := log.FromContext(ctx).WithValues("vmName", vmName, "wantIPConfig", wantIPConfig, "ipPrefixID", ipPrefixID)
+	ctx = log.IntoContext(ctx, logger)
+	ipConfigName := managedSubresourceName(vmConfig)
+	vmProfile, _, _ := r.getStandaloneVMProfile(ctx, vmConfig)
+
+	if vm.Properties == nil || vm.Properties.NetworkProfile == nil {
+		return "", fmt.Errorf("VM %s has empty network profile", vmName)
+	}
+
+	// Get the primary network interface
+	var primaryNicID string
+	for _, nicRef := range vm.Properties.NetworkProfile.NetworkInterfaces {
+		if nicRef.Properties != nil && to.Val(nicRef.Properties.Primary) {
+			primaryNicID = to.Val(nicRef.ID)
+			break
+		}
+	}
+
+	if primaryNicID == "" {
+		return "", fmt.Errorf("VM %s has no primary network interface", vmName)
+	}
+
+	// Extract NIC name from resource ID
+	nicName := primaryNicID[strings.LastIndex(primaryNicID, "/")+1:]
+
+	// Get the network interface
+	nic, err := r.GetVMNetworkInterface(ctx, vmProfile.VMResourceGroup, nicName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get network interface %s for VM %s: %w", nicName, vmName, err)
+	}
+
+	// Check current IP configurations
+	var primaryIP, secondaryIP string
+
+	if nic.Properties != nil && nic.Properties.IPConfigurations != nil {
+		for _, ipConfig := range nic.Properties.IPConfigurations {
+			if ipConfig != nil && ipConfig.Properties != nil {
+				if strings.EqualFold(to.Val(ipConfig.Name), ipConfigName) {
+					secondaryIP = to.Val(ipConfig.Properties.PrivateIPAddress)
+				} else if to.Val(ipConfig.Properties.Primary) {
+					primaryIP = to.Val(ipConfig.Properties.PrivateIPAddress)
+				}
+			}
+		}
+	}
+
+	// Update VM profile in status
+	if vmConfig.Status != nil {
+		found := false
+		for i := range vmConfig.Status.GatewayVMProfiles {
+			if vmConfig.Status.GatewayVMProfiles[i].NodeName == vmName {
+				vmConfig.Status.GatewayVMProfiles[i].PrimaryIP = primaryIP
+				vmConfig.Status.GatewayVMProfiles[i].SecondaryIP = secondaryIP
+				found = true
+				break
+			}
+		}
+		if !found {
+			vmConfig.Status.GatewayVMProfiles = append(vmConfig.Status.GatewayVMProfiles,
+				egressgatewayv1alpha1.GatewayVMProfile{
+					NodeName:    vmName,
+					PrimaryIP:   primaryIP,
+					SecondaryIP: secondaryIP,
+				})
+		}
+	}
+
+	// For now, return the primary IP - full NIC configuration will be implemented in subsequent phases
+	return primaryIP, nil
 }
 
 func (r *GatewayVMConfigurationReconciler) ensureDeleted(

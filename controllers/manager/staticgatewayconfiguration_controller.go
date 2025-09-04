@@ -457,7 +457,15 @@ func (r *StaticGatewayConfigurationReconciler) reconcileGatewayLBConfig(
 	}
 	if _, err := controllerutil.CreateOrPatch(ctx, r, lbConfig, func() error {
 		lbConfig.Spec.GatewayNodepoolName = gwConfig.Spec.GatewayNodepoolName
+
+		// Copy the new GatewayProfile if it's not empty
+		if !gatewayProfileIsEmpty(gwConfig) {
+			lbConfig.Spec.GatewayProfile = gwConfig.Spec.GatewayProfile
+		}
+
+		// Maintain backward compatibility with deprecated GatewayVmssProfile
 		lbConfig.Spec.GatewayVmssProfile = gwConfig.Spec.GatewayVmssProfile
+
 		lbConfig.Spec.ProvisionPublicIps = gwConfig.Spec.ProvisionPublicIps
 		lbConfig.Spec.PublicIpPrefixId = gwConfig.Spec.PublicIpPrefixId
 		return controllerutil.SetControllerReference(gwConfig, lbConfig, r.Client.Scheme())

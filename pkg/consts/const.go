@@ -48,6 +48,12 @@ const (
 	// nodepool mode label value in aks clusters
 	AKSNodepoolModeValue = "gateway"
 
+	// Label key for standalone VM mode
+	StandaloneVMNodeModeLabel = "kubernetes.azure.com/standalone-vm-mode"
+
+	// Label value for standalone VM gateway nodes
+	StandaloneVMNodeModeValue = "gateway"
+
 	// gateway nodepool ip prefix size tag key in aks clusters
 	AKSNodepoolIPPrefixSizeTagKey = "aks-managed-gatewayIPPrefixSize"
 

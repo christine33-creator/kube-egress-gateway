@@ -43,8 +43,51 @@ spec:
               gatewayNodepoolName:
                 description: Name of the gateway nodepool to apply the gateway configuration.
                 type: string
+              gatewayProfile:
+                description: Gateway profile supporting both VMSS and standalone VMs
+                properties:
+                  standaloneVMProfile:
+                    description: Standalone VM-based gateway configuration
+                    properties:
+                      publicIpPrefixSize:
+                        description: Public IP prefix size to be applied to these
+                          VMs.
+                        format: int32
+                        maximum: 31
+                        minimum: 0
+                        type: integer
+                      vmNames:
+                        description: List of standalone VM names to use as gateways
+                        items:
+                          type: string
+                        type: array
+                      vmResourceGroup:
+                        description: Resource group containing the standalone VMs.
+                          Must be in the same subscription.
+                        type: string
+                    type: object
+                  vmssProfile:
+                    description: VMSS-based gateway configuration
+                    properties:
+                      publicIpPrefixSize:
+                        description: Public IP prefix size to be applied to this VMSS.
+                        format: int32
+                        maximum: 31
+                        minimum: 0
+                        type: integer
+                      vmssName:
+                        description: Name of the VMSS
+                        type: string
+                      vmssResourceGroup:
+                        description: Resource group of the VMSS. Must be in the same
+                          subscription.
+                        type: string
+                    type: object
+                type: object
               gatewayVmssProfile:
-                description: Profile of the gateway VMSS to apply the gateway configuration.
+                description: |-
+                  DEPRECATED: Profile of the gateway VMSS to apply the gateway configuration.
+                  Use GatewayProfile.VmssProfile instead. This field will be removed in a future version.
                 properties:
                   publicIpPrefixSize:
                     description: Public IP prefix size to be applied to this VMSS.

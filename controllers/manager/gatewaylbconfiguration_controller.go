@@ -686,7 +686,15 @@ func (r *GatewayLBConfigurationReconciler) reconcileGatewayVMConfig(
 	}
 	if _, err := controllerutil.CreateOrPatch(ctx, r, vmConfig, func() error {
 		vmConfig.Spec.GatewayNodepoolName = lbConfig.Spec.GatewayNodepoolName
+
+		// Copy the new GatewayProfile if it's not empty
+		if !gatewayProfileIsEmptyForLBConfig(lbConfig) {
+			vmConfig.Spec.GatewayProfile = lbConfig.Spec.GatewayProfile
+		}
+
+		// Maintain backward compatibility with deprecated GatewayVmssProfile
 		vmConfig.Spec.GatewayVmssProfile = lbConfig.Spec.GatewayVmssProfile
+
 		vmConfig.Spec.ProvisionPublicIps = lbConfig.Spec.ProvisionPublicIps
 		vmConfig.Spec.PublicIpPrefixId = lbConfig.Spec.PublicIpPrefixId
 		return controllerutil.SetControllerReference(lbConfig, vmConfig, r.Client.Scheme())
@@ -704,4 +712,9 @@ func (r *GatewayLBConfigurationReconciler) reconcileGatewayVMConfig(
 	}
 
 	return nil
+}
+
+func gatewayProfileIsEmptyForLBConfig(lbConfig *egressgatewayv1alpha1.GatewayLBConfiguration) bool {
+	return lbConfig.Spec.GatewayProfile.VmssProfile == nil &&
+		lbConfig.Spec.GatewayProfile.StandaloneVMProfile == nil
 }
