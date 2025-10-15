@@ -67,6 +67,65 @@ func CreateNginxPodManifest(nsName, gwName string) *corev1.Pod {
 	}
 }
 
+func CreateAgnhostPodManifest(nsName, gwName string) *corev1.Pod {
+	annotations := make(map[string]string)
+	if gwName != "" {
+		annotations["kubernetes.azure.com/static-gateway-configuration"] = gwName
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "agnhost-target-" + string(uuid.NewUUID())[0:4],
+			Namespace:   nsName,
+			Annotations: annotations,
+			Labels: map[string]string{
+				"app": "agnhost-target",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:            "agnhost",
+					Image:           "registry.k8s.io/e2e-test-images/agnhost:2.36",
+					ImagePullPolicy: corev1.PullIfNotPresent,
+					Args:            []string{"netexec"},
+					Ports:           []corev1.ContainerPort{{ContainerPort: 8080}},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyAlways,
+		},
+	}
+}
+
+func CreatePrivateEgressTestPodManifest(nsName, gwName, privateEndpoint string) *corev1.Pod {
+	annotations := make(map[string]string)
+	if gwName != "" {
+		annotations["kubernetes.azure.com/static-gateway-configuration"] = gwName
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "private-egress-test-" + string(uuid.NewUUID())[0:4],
+			Namespace:   nsName,
+			Annotations: annotations,
+			Labels: map[string]string{
+				"app": "private-egress-test",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:            "app",
+					Image:           "registry.k8s.io/e2e-test-images/agnhost:2.36",
+					ImagePullPolicy: corev1.PullIfNotPresent,
+					Command: []string{
+						"/bin/sh", "-c", "curl -s -m 10 --retry-delay 5 --retry 5 " + privateEndpoint,
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+}
+
 func getPodLog(c clientset.Interface, name, namespace string, opts *corev1.PodLogOptions) ([]byte, error) {
 	return c.CoreV1().Pods(namespace).GetLogs(name, opts).Do(context.Background()).Raw()
 }
@@ -136,4 +195,31 @@ func WaitGetPodIP(pod *corev1.Pod, c clientset.Interface) (string, error) {
 		return false, nil
 	})
 	return podIP, err
+}
+
+func WaitGetAgnhostPodEndpoint(namespace string, c clientset.Interface) (string, error) {
+	var endpoint string
+	err := wait.PollUntilContextTimeout(context.Background(), poll, pollTimeout, true, func(ctx context.Context) (bool, error) {
+		pods, err := c.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{
+			LabelSelector: "app=agnhost-target",
+		})
+		if err != nil {
+			if retriable(err) {
+				return false, nil
+			}
+			return false, err
+		}
+
+		for _, pod := range pods.Items {
+			if pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
+				endpoint = pod.Status.PodIP + ":8080/clientip"
+				Logf("Found ready agnhost pod %s with IP %s", pod.Name, pod.Status.PodIP)
+				return true, nil
+			}
+		}
+
+		Logf("Waiting for agnhost pod to be ready in namespace %s", namespace)
+		return false, nil
+	})
+	return endpoint, err
 }

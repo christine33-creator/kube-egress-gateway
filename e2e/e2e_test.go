@@ -29,7 +29,7 @@ var (
 	nginxRespRE = regexp.MustCompile(`Welcome to nginx!`)
 )
 
-var _ = Describe("Test staticGatewayConfiguration deployment", func() {
+var _ = Describe("Test staticGatewayConfiguration deployment [P0 Coverage]", func() {
 	// use controller-runtime client to manage cr
 	var k8sClient client.Client
 	// there is no easy way to get pod log with controller-runtime client, use client-go client instead
@@ -66,6 +66,7 @@ var _ = Describe("Test staticGatewayConfiguration deployment", func() {
 		testns = ""
 	})
 
+	// P0 test case: Public egress functionality with IP validation
 	It("should let pod egress from the egress gateway and not affect pod not using the gateway", func() {
 		rg, vmss, _, prefixLen, err := utils.GetGatewayVmssProfile(k8sClient)
 		Expect(err).NotTo(HaveOccurred())
@@ -348,6 +349,88 @@ var _ = Describe("Test staticGatewayConfiguration deployment", func() {
 
 		By("Checking pod egress IP DOES NOT belong to egress gateway outbound IP range")
 		Expect(egressIPs).ShouldNot(ContainElement(podEgressIP))
+	})
+
+	// P0 test case: Private IP egress functionality
+	It("[P0] should support private egress connectivity through static gateway", func() {
+		rg, vmss, _, prefixLen, err := utils.GetGatewayVmssProfile(k8sClient)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Creating a StaticGatewayConfiguration with ProvisionPublicIps disabled for private egress testing")
+		sgw := &v1alpha1.StaticGatewayConfiguration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "private-sgw",
+				Namespace: testns,
+			},
+			Spec: v1alpha1.StaticGatewayConfigurationSpec{
+				GatewayVmssProfile: v1alpha1.GatewayVmssProfile{
+					VmssResourceGroup:  rg,
+					VmssName:           vmss,
+					PublicIpPrefixSize: prefixLen,
+				},
+				ProvisionPublicIps: false,
+				DefaultRoute:       "azureNetworking",
+			},
+		}
+		err = utils.CreateK8sObject(sgw, k8sClient)
+		Expect(err).NotTo(HaveOccurred())
+
+		egressIPs, err := utils.WaitStaticGatewayProvision(sgw, k8sClient)
+		Expect(err).NotTo(HaveOccurred())
+		utils.Logf("Got private egress gateway configuration with IPs: %s", egressIPs)
+
+		By("Creating a target agnhost pod for private connectivity testing")
+		agnhostPod := utils.CreateAgnhostPodManifest(testns, "")
+		err = utils.CreateK8sObject(agnhostPod, k8sClient)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Wait for agnhost pod to be ready and get its endpoint
+		privateEndpoint, err := utils.WaitGetAgnhostPodEndpoint(testns, podLogClient)
+		Expect(err).NotTo(HaveOccurred())
+		utils.Logf("Private endpoint ready: %s", privateEndpoint)
+
+		By("Creating a test pod using the private static gateway")
+		testPod := utils.CreatePrivateEgressTestPodManifest(testns, "private-sgw", privateEndpoint)
+		err = utils.CreateK8sObject(testPod, k8sClient)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Validating private egress connectivity through gateway")
+		clientIPResponse, err := utils.GetExpectedPodLog(testPod, podLogClient, podIPRE)
+		Expect(err).NotTo(HaveOccurred())
+		utils.Logf("Got client IP response from agnhost: %s", clientIPResponse)
+
+		// Validate that we got a private IP response (10.x.x.x range typically used in AKS)
+		Expect(strings.Contains(clientIPResponse, "10.")).To(BeTrue(),
+			"Expected private IP response from agnhost, got: %s", clientIPResponse)
+
+		By("Verifying StaticGatewayConfiguration status indicates readiness")
+		// Re-fetch the SGW to check its status
+		updatedSgw := &v1alpha1.StaticGatewayConfiguration{}
+		err = k8sClient.Get(context.Background(), client.ObjectKey{
+			Namespace: testns,
+			Name:      "private-sgw",
+		}, updatedSgw)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Check that the status has been populated
+		Expect(updatedSgw.Status.EgressIpPrefix).NotTo(BeEmpty(),
+			"StaticGatewayConfiguration should have populated EgressIpPrefix in status")
+		utils.Logf("StaticGatewayConfiguration status ready with EgressIpPrefix: %s",
+			updatedSgw.Status.EgressIpPrefix)
+
+		By("Testing connectivity without gateway annotation (should use different egress path)")
+		testPodNoGW := utils.CreatePrivateEgressTestPodManifest(testns, "", privateEndpoint)
+		err = utils.CreateK8sObject(testPodNoGW, k8sClient)
+		Expect(err).NotTo(HaveOccurred())
+
+		clientIPResponseNoGW, err := utils.GetExpectedPodLog(testPodNoGW, podLogClient, podIPRE)
+		Expect(err).NotTo(HaveOccurred())
+		utils.Logf("Got client IP response without gateway: %s", clientIPResponseNoGW)
+
+		// Both should be able to reach the private endpoint, but potentially with different source IPs
+		// This validates that the gateway doesn't break normal pod-to-pod communication
+		Expect(strings.Contains(clientIPResponseNoGW, "10.")).To(BeTrue(),
+			"Expected private IP response from agnhost without gateway, got: %s", clientIPResponseNoGW)
 	})
 })
 
