@@ -1,0 +1,182 @@
+---
+# Scenario 1: Configuration Problems - Pod with incorrect service selector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: misconfigured-app
+  namespace: demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: misconfigured-app
+  template:
+    metadata:
+      labels:
+        app: misconfigured-app
+        tier: backend
+        version: v1
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+---
+# Service with WRONG selector (won't match the pod)
+apiVersion: v1
+kind: Service
+metadata:
+  name: misconfigured-service
+  namespace: demo-app
+spec:
+  selector:
+    app: misconfigured-app
+    version: v2  # WRONG! Pod has v1
+  ports:
+  - port: 8080
+    targetPort: 80
+---
+# Scenario 2: Connectivity Failure - Pod trying to reach non-existent service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-client
+  namespace: demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: broken-client
+  template:
+    metadata:
+      labels:
+        app: broken-client
+    spec:
+      containers:
+      - name: client
+        image: curlimages/curl:latest
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            while true; do
+              echo "Trying to reach non-existent service..."
+              curl -s http://nonexistent-service.demo-app.svc.cluster.local:8080/ || echo "Failed to connect"
+              sleep 10
+            done
+---
+# Scenario 3: DNS Resolution Issues - Pod with invalid DNS config
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dns-issue-pod
+  namespace: demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dns-issue-pod
+  template:
+    metadata:
+      labels:
+        app: dns-issue-pod
+    spec:
+      dnsPolicy: None  # Invalid DNS configuration
+      dnsConfig:
+        nameservers:
+          - 1.1.1.1  # External DNS, won't resolve cluster services
+      containers:
+      - name: app
+        image: curlimages/curl:latest
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            while true; do
+              echo "Trying DNS resolution..."
+              nslookup backend-api.demo-app.svc.cluster.local || echo "DNS failed"
+              sleep 15
+            done
+---
+# Scenario 4: Network Policy - Create restrictive policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: demo-app
+spec:
+  podSelector:
+    matchLabels:
+      app: backend-api
+  policyTypes:
+  - Ingress
+  ingress: []  # Denies all ingress traffic
+---
+# Scenario 5: Conflicting Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-only
+  namespace: demo-app
+spec:
+  podSelector:
+    matchLabels:
+      app: backend-api
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+---
+# Scenario 6: Pod with missing required labels
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unlabeled-pod
+  namespace: demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: unlabeled-pod
+  template:
+    metadata:
+      labels:
+        app: unlabeled-pod
+        # Missing: tier, version, environment labels that might be required
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+---
+# Scenario 7: Pod in degraded state (simulate resource issues)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resource-constrained
+  namespace: demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: resource-constrained
+  template:
+    metadata:
+      labels:
+        app: resource-constrained
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+        resources:
+          requests:
+            memory: "10Mi"
+            cpu: "10m"
+          limits:
+            memory: "20Mi"  # Very low memory limit - likely to cause issues
+            cpu: "50m"
+        ports:
+        - containerPort: 80

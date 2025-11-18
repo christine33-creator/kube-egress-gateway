@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes Network Visualizer</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/cytoscape@3.27.0/dist/cytoscape.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+            background: #0a0e27;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        .app-container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px 30px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            z-index: 100;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .header-subtitle {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        .toolbar {
+            background: #1a1e3a;
+            padding: 12px 20px;
+            border-bottom: 1px solid #2a2e4a;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .search-box {
+            flex: 1;
+            min-width: 200px;
+            max-width: 400px;
+        }
+        
+        .search-box input {
+            width: 100%;
+            padding: 8px 12px;
+            background: #252941;
+            border: 1px solid #2a2e4a;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 13px;
+        }
+        
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .filter-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        
+        .filter-btn, .layout-btn {
+            padding: 6px 12px;
+            background: #252941;
+            border: 1px solid #2a2e4a;
+            border-radius: 6px;
+            color: #a0aec0;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .filter-btn:hover, .layout-btn:hover {
+            background: #2a2e4a;
+            border-color: #667eea;
+            color: #fff;
+        }
+        
+        .filter-btn.active, .layout-btn.active {
+            background: #667eea;
+            border-color: #667eea;
+            color: #fff;
+        }
+        
+        .filter-label {
+            font-size: 12px;
+            color: #a0aec0;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .main-content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .sidebar {
+            width: 320px;
+            background: #1a1e3a;
+            padding: 0;
+            overflow-y: auto;
+            border-right: 1px solid #2a2e4a;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .tab-nav {
+            display: flex;
+            background: #252941;
+            border-bottom: 1px solid #2a2e4a;
+        }
+        
+        .tab-btn {
+            flex: 1;
+            padding: 12px;
+            background: none;
+            border: none;
+            color: #a0aec0;
+            font-size: 13px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .tab-btn:hover {
+            color: #fff;
+            background: #2a2e4a;
+        }
+        
+        .tab-btn.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        
+        .tab-content {
+            padding: 20px;
+            flex: 1;
+            overflow-y: auto;
+        }
+        
+        .graph-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #cy {
+            width: 100%;
+            height: 100%;
+            background: #0f1323;
+        }
+        
+        .stats-card {
+            background: #252941;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        
+        .stats-card h3 {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #a0aec0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #2a2e4a;
+        }
+        
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+        
+        .stat-label {
+            color: #a0aec0;
+            font-size: 13px;
+        }
+        
+        .stat-value {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .status-healthy {
+            background: #10b981;
+            color: #fff;
+        }
+        
+        .status-degraded {
+            background: #f59e0b;
+            color: #fff;
+        }
+        
+        .status-failed {
+            background: #ef4444;
+            color: #fff;
+        }
+        
+        .flow-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: #ef4444;
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 20px;
+            font-weight: 600;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .issues-panel {
+            background: #1a1e3a;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .issue-item {
+            background: #252941;
+            border-left: 4px solid #f59e0b;
+            padding: 12px;
+            margin-bottom: 12px;
+            border-radius: 6px;
+        }
+        
+        .issue-item.critical {
+            border-left-color: #ef4444;
+        }
+        
+        .issue-item.medium {
+            border-left-color: #f59e0b;
+        }
+        
+        .issue-item.low {
+            border-left-color: #3b82f6;
+        }
+        
+        .issue-title {
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        
+        .issue-desc {
+            font-size: 13px;
+            color: #a0aec0;
+        }
+        
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: #1a1e3a;
+            padding: 16px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+        }
+        
+        .legend-label {
+            font-size: 13px;
+            color: #a0aec0;
+        }
+        
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-size: 18px;
+            color: #a0aec0;
+        }
+        
+        .node-detail-panel {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1a1e3a;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            max-width: 500px;
+            z-index: 50;
+        }
+        
+        .close-btn {
+            float: right;
+            background: none;
+            border: none;
+            color: #a0aec0;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        
+        .detail-row {
+            margin: 8px 0;
+            font-size: 13px;
+        }
+        
+        .detail-label {
+            color: #a0aec0;
+            display: inline-block;
+            width: 120px;
+        }
+        
+        .detail-value {
+            color: #fff;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        function App() {
+            const [topology, setTopology] = useState(null);
+            const [flows, setFlows] = useState([]);
+            const [flowMetrics, setFlowMetrics] = useState({});
+            const [issues, setIssues] = useState([]);
+            const [selectedNode, setSelectedNode] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [searchQuery, setSearchQuery] = useState('');
+            const [statusFilter, setStatusFilter] = useState('all');
+            const [typeFilter, setTypeFilter] = useState('all');
+            const [namespaceFilter, setNamespaceFilter] = useState('all');
+            const [currentLayout, setCurrentLayout] = useState('cose');
+            const [activeTab, setActiveTab] = useState('topology');
+            const [trafficMetrics, setTrafficMetrics] = useState(null);
+            const [connectionMetrics, setConnectionMetrics] = useState(null);
+            const [errorMetrics, setErrorMetrics] = useState(null);
+            const cyRef = useRef(null);
+            const cyInstance = useRef(null);
+
+            useEffect(() => {
+                fetchTopology();
+                fetchFlows();
+                fetchIssues();
+                fetchMetrics();
+                
+                const topologyInterval = setInterval(fetchTopology, 10000);
+                const flowsInterval = setInterval(fetchFlows, 5000);
+                const metricsInterval = setInterval(fetchMetrics, 10000);
+                
+                return () => {
+                    clearInterval(topologyInterval);
+                    clearInterval(flowsInterval);
+                    clearInterval(metricsInterval);
+                };
+            }, []);
+
+            useEffect(() => {
+                applyFilters();
+            }, [searchQuery, statusFilter, typeFilter, namespaceFilter]);
+
+            const fetchTopology = async () => {
+                try {
+                    const response = await fetch('/api/topology');
+                    const data = await response.json();
+                    setTopology(data);
+                    setLoading(false);
+                    
+                    if (cyInstance.current) {
+                        updateGraph(data);
+                    } else {
+                        initGraph(data);
+                    }
+                } catch (error) {
+                    console.error('Error fetching topology:', error);
+                    setLoading(false);
+                }
+            };
+
+            const fetchFlows = async () => {
+                try {
+                    const response = await fetch('/api/flows');
+                    const data = await response.json();
+                    setFlows(data || []);
+                    
+                    const metricsResponse = await fetch('/api/flows/metrics');
+                    const metricsData = await metricsResponse.json();
+                    setFlowMetrics(metricsData);
+                } catch (error) {
+                    console.error('Error fetching flows:', error);
+                }
+            };
+
+            const fetchIssues = async () => {
+                try {
+                    const response = await fetch('/api/issues');
+                    const data = await response.json();
+                    setIssues(data || []);
+                } catch (error) {
+                    console.error('Error fetching issues:', error);
+                }
+            };
+
+            const fetchMetrics = async () => {
+                try {
+                    const [traffic, connections, errors] = await Promise.all([
+                        fetch('/api/metrics/traffic').then(r => r.json()),
+                        fetch('/api/metrics/connections').then(r => r.json()),
+                        fetch('/api/metrics/errors').then(r => r.json())
+                    ]);
+                    setTrafficMetrics(traffic);
+                    setConnectionMetrics(connections);
+                    setErrorMetrics(errors);
+                } catch (error) {
+                    console.error('Error fetching metrics:', error);
+                }
+            };
+
+            const getNodeColor = (type, status) => {
+                if (status === 'failed') return '#ef4444';
+                if (status === 'degraded') return '#f59e0b';
+                
+                switch(type) {
+                    case 'pod': return '#10b981';
+                    case 'service': return '#3b82f6';
+                    case 'node': return '#8b5cf6';
+                    case 'namespace': return '#ec4899';
+                    default: return '#6b7280';
+                }
+            };
+
+            const initGraph = (data) => {
+                const elements = [];
+                
+                // Add nodes
+                data.nodes.forEach(node => {
+                    elements.push({
+                        data: {
+                            id: node.id,
+                            label: node.label,
+                            type: node.type,
+                            status: node.status,
+                            namespace: node.namespace,
+                            nodeData: node.data
+                        }
+                    });
+                });
+
+                // Add edges
+                data.edges.forEach(edge => {
+                    elements.push({
+                        data: {
+                            id: edge.id,
+                            source: edge.source,
+                            target: edge.target,
+                            type: edge.type
+                        }
+                    });
+                });
+
+                cyInstance.current = cytoscape({
+                    container: cyRef.current,
+                    elements: elements,
+                    style: [
+                        {
+                            selector: 'node',
+                            style: {
+                                'background-color': ele => getNodeColor(ele.data('type'), ele.data('status')),
+                                'label': 'data(label)',
+                                'color': '#fff',
+                                'text-valign': 'bottom',
+                                'text-margin-y': 5,
+                                'font-size': '11px',
+                                'width': ele => {
+                                    if (ele.data('type') === 'namespace') return 60;
+                                    if (ele.data('type') === 'node') return 50;
+                                    if (ele.data('type') === 'service') return 40;
+                                    return 30;
+                                },
+                                'height': ele => {
+                                    if (ele.data('type') === 'namespace') return 60;
+                                    if (ele.data('type') === 'node') return 50;
+                                    if (ele.data('type') === 'service') return 40;
+                                    return 30;
+                                },
+                                'border-width': 2,
+                                'border-color': '#fff',
+                                'border-opacity': 0.3
+                            }
+                        },
+                        {
+                            selector: 'edge',
+                            style: {
+                                'width': 2,
+                                'line-color': ele => {
+                                    const type = ele.data('type');
+                                    if (type === 'service-to-pod') return '#3b82f6';
+                                    if (type === 'pod-to-node') return '#8b5cf6';
+                                    if (type === 'namespace-to-pod') return '#ec4899';
+                                    if (type === 'traffic') return '#10b981';
+                                    return '#4b5563';
+                                },
+                                'target-arrow-color': ele => {
+                                    const type = ele.data('type');
+                                    if (type === 'service-to-pod') return '#3b82f6';
+                                    if (type === 'pod-to-node') return '#8b5cf6';
+                                    if (type === 'namespace-to-pod') return '#ec4899';
+                                    if (type === 'traffic') return '#10b981';
+                                    return '#4b5563';
+                                },
+                                'target-arrow-shape': 'triangle',
+                                'curve-style': 'bezier',
+                                'opacity': 0,
+                                'width': 3
+                            }
+                        },
+                        {
+                            selector: 'edge.highlighted',
+                            style: {
+                                'opacity': 0.8,
+                                'width': 4,
+                                'z-index': 999
+                            }
+                        },
+                        {
+                            selector: 'edge.dimmed',
+                            style: {
+                                'opacity': 0
+                            }
+                        },
+                        {
+                            selector: 'node:selected',
+                            style: {
+                                'border-width': 4,
+                                'border-color': '#fff',
+                                'border-opacity': 1
+                            }
+                        }
+                    ],
+                    layout: {
+                        name: 'cose',
+                        animate: false,
+                        nodeRepulsion: 8000,
+                        idealEdgeLength: 100,
+                        edgeElasticity: 100
+                    }
+                });
+
+                // Hover to show connected edges
+                cyInstance.current.on('mouseover', 'node', (evt) => {
+                    const node = evt.target;
+                    const connectedEdges = node.connectedEdges();
+                    
+                    // Hide all edges first
+                    cyInstance.current.edges().removeClass('highlighted').addClass('dimmed');
+                    
+                    // Show only connected edges
+                    connectedEdges.removeClass('dimmed').addClass('highlighted');
+                });
+
+                cyInstance.current.on('mouseout', 'node', (evt) => {
+                    // Check if a node is selected
+                    const selected = cyInstance.current.$(':selected');
+                    if (selected.length === 0) {
+                        // No selection, hide all edges
+                        cyInstance.current.edges().removeClass('highlighted dimmed');
+                    }
+                });
+
+                cyInstance.current.on('tap', 'node', (evt) => {
+                    const node = evt.target;
+                    const connectedEdges = node.connectedEdges();
+                    
+                    // Show node details
+                    setSelectedNode({
+                        id: node.data('id'),
+                        label: node.data('label'),
+                        type: node.data('type'),
+                        status: node.data('status'),
+                        namespace: node.data('namespace'),
+                        data: node.data('nodeData')
+                    });
+                    
+                    // Keep connected edges visible
+                    cyInstance.current.edges().removeClass('highlighted').addClass('dimmed');
+                    connectedEdges.removeClass('dimmed').addClass('highlighted');
+                });
+
+                cyInstance.current.on('tap', (evt) => {
+                    if (evt.target === cyInstance.current) {
+                        setSelectedNode(null);
+                        // Hide all edges when clicking background
+                        cyInstance.current.edges().removeClass('highlighted dimmed');
+                    }
+                });
+            };
+
+            const updateGraph = (data) => {
+                // Simple update - in production would do incremental updates
+                cyInstance.current.elements().remove();
+                
+                const elements = [];
+                data.nodes.forEach(node => {
+                    elements.push({
+                        data: {
+                            id: node.id,
+                            label: node.label,
+                            type: node.type,
+                            status: node.status,
+                            namespace: node.namespace,
+                            nodeData: node.data
+                        }
+                    });
+                });
+
+                data.edges.forEach(edge => {
+                    elements.push({
+                        data: {
+                            id: edge.id,
+                            source: edge.source,
+                            target: edge.target,
+                            type: edge.type
+                        }
+                    });
+                });
+
+                cyInstance.current.add(elements);
+                applyFilters();
+                cyInstance.current.layout({ name: currentLayout, animate: false }).run();
+            };
+
+            const applyFilters = () => {
+                if (!cyInstance.current) return;
+                
+                let filteredNodes = cyInstance.current.nodes();
+                
+                // Search filter
+                if (searchQuery) {
+                    filteredNodes = filteredNodes.filter(node => {
+                        const label = node.data('label').toLowerCase();
+                        const namespace = node.data('namespace') || '';
+                        const query = searchQuery.toLowerCase();
+                        return label.includes(query) || namespace.toLowerCase().includes(query);
+                    });
+                }
+                
+                // Status filter
+                if (statusFilter !== 'all') {
+                    filteredNodes = filteredNodes.filter(node => node.data('status') === statusFilter);
+                }
+                
+                // Type filter
+                if (typeFilter !== 'all') {
+                    filteredNodes = filteredNodes.filter(node => node.data('type') === typeFilter);
+                }
+                
+                // Namespace filter
+                if (namespaceFilter !== 'all') {
+                    filteredNodes = filteredNodes.filter(node => node.data('namespace') === namespaceFilter);
+                }
+                
+                // Show filtered nodes and hide others
+                cyInstance.current.nodes().style('display', 'none');
+                filteredNodes.style('display', 'element');
+                
+                // Show edges connected to visible nodes
+                cyInstance.current.edges().style('display', 'none');
+                filteredNodes.connectedEdges().style('display', 'element');
+            };
+
+            const changeLayout = (layoutName) => {
+                if (!cyInstance.current) return;
+                setCurrentLayout(layoutName);
+                
+                const layoutOptions = {
+                    'cose': { name: 'cose', animate: true, nodeRepulsion: 8000 },
+                    'hierarchical': { name: 'breadthfirst', directed: true, spacingFactor: 1.5 },
+                    'circular': { name: 'circle', animate: true },
+                    'grid': { name: 'grid', animate: true }
+                };
+                
+                cyInstance.current.layout(layoutOptions[layoutName] || layoutOptions.cose).run();
+            };
+
+            if (loading) {
+                return <div className="loading">Loading Kubernetes Cluster...</div>;
+            }
+
+            return (
+                <div className="app-container">
+                    <div className="header">
+                        <h1>🚀 Kubernetes Network Visualizer</h1>
+                        <div className="header-subtitle">
+                            Real-time cluster topology and network flow visualization
+                        </div>
+                    </div>
+                    
+                    <div className="toolbar">
+                        <div className="search-box">
+                            <input
+                                type="text"
+                                placeholder="🔍 Search pods, services, namespaces..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                        </div>
+                        
+                        <div className="filter-group">
+                            <span className="filter-label">Status:</span>
+                            <button className={`filter-btn ${statusFilter === 'all' ? 'active' : ''}`} onClick={() => setStatusFilter('all')}>All</button>
+                            <button className={`filter-btn ${statusFilter === 'healthy' ? 'active' : ''}`} onClick={() => setStatusFilter('healthy')}>Healthy</button>
+                            <button className={`filter-btn ${statusFilter === 'degraded' ? 'active' : ''}`} onClick={() => setStatusFilter('degraded')}>Degraded</button>
+                            <button className={`filter-btn ${statusFilter === 'failed' ? 'active' : ''}`} onClick={() => setStatusFilter('failed')}>Failed</button>
+                        </div>
+                        
+                        <div className="filter-group">
+                            <span className="filter-label">Type:</span>
+                            <button className={`filter-btn ${typeFilter === 'all' ? 'active' : ''}`} onClick={() => setTypeFilter('all')}>All</button>
+                            <button className={`filter-btn ${typeFilter === 'pod' ? 'active' : ''}`} onClick={() => setTypeFilter('pod')}>Pods</button>
+                            <button className={`filter-btn ${typeFilter === 'service' ? 'active' : ''}`} onClick={() => setTypeFilter('service')}>Services</button>
+                            <button className={`filter-btn ${typeFilter === 'node' ? 'active' : ''}`} onClick={() => setTypeFilter('node')}>Nodes</button>
+                        </div>
+                        
+                        <div className="filter-group">
+                            <span className="filter-label">Layout:</span>
+                            <button className={`layout-btn ${currentLayout === 'cose' ? 'active' : ''}`} onClick={() => changeLayout('cose')}>Force</button>
+                            <button className={`layout-btn ${currentLayout === 'hierarchical' ? 'active' : ''}`} onClick={() => changeLayout('hierarchical')}>Hierarchical</button>
+                            <button className={`layout-btn ${currentLayout === 'circular' ? 'active' : ''}`} onClick={() => changeLayout('circular')}>Circular</button>
+                            <button className={`layout-btn ${currentLayout === 'grid' ? 'active' : ''}`} onClick={() => changeLayout('grid')}>Grid</button>
+                        </div>
+                    </div>
+                    
+                    <div className="main-content">
+                        <div className="sidebar">
+                            <div className="stats-card">
+                                <h3>Cluster Overview</h3>
+                                <div className="stat-row">
+                                    <span className="stat-label">Total Nodes</span>
+                                    <span className="stat-value">{topology?.nodes.filter(n => n.type === 'node').length || 0}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Total Pods</span>
+                                    <span className="stat-value">{topology?.nodes.filter(n => n.type === 'pod').length || 0}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Services</span>
+                                    <span className="stat-value">{topology?.nodes.filter(n => n.type === 'service').length || 0}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Namespaces</span>
+                                    <span className="stat-value">{topology?.nodes.filter(n => n.type === 'namespace').length || 0}</span>
+                                </div>
+                            </div>
+
+                            <div className="stats-card">
+                                <h3>Network Flows</h3>
+                                <div className="stat-row">
+                                    <span className="stat-label">Active Flows</span>
+                                    <span className="stat-value">{flows.length}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Total Bytes</span>
+                                    <span className="stat-value">{(flowMetrics.totalBytes || 0).toLocaleString()}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Total Packets</span>
+                                    <span className="stat-value">{(flowMetrics.totalPackets || 0).toLocaleString()}</span>
+                                </div>
+                            </div>
+
+                            {issues.length > 0 && (
+                                <div className="issues-panel">
+                                    <h3 style={{marginBottom: '12px', fontSize: '14px', color: '#a0aec0'}}>
+                                        DETECTED ISSUES ({issues.length})
+                                    </h3>
+                                    {issues.map(issue => (
+                                        <div key={issue.id} className={`issue-item ${issue.severity}`}>
+                                            <div className="issue-title">{issue.title}</div>
+                                            <div className="issue-desc">{issue.description}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {flows.length > 0 && (
+                                <div className="stats-card">
+                                    <h3>Recent Flows</h3>
+                                    {flows.slice(0, 5).map((flow, idx) => (
+                                        <div key={idx} className="stat-row">
+                                            <span className="stat-label">{flow.sourcePod} → {flow.destPod}</span>
+                                            <span className="stat-value">{flow.protocol}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="graph-container">
+                            <div id="cy" ref={cyRef}></div>
+                            
+                            {flows.length > 0 && (
+                                <div className="flow-badge">
+                                    🔴 {flows.length} Active Flows
+                                </div>
+                            )}
+
+                            <div className="legend">
+                                <h4 style={{fontSize: '12px', marginBottom: '12px', color: '#a0aec0', textTransform: 'uppercase'}}>Nodes</h4>
+                                <div className="legend-item">
+                                    <div className="legend-color" style={{background: '#10b981'}}></div>
+                                    <span className="legend-label">Pod (Healthy)</span>
+                                </div>
+                                <div className="legend-item">
+                                    <div className="legend-color" style={{background: '#3b82f6'}}></div>
+                                    <span className="legend-label">Service</span>
+                                </div>
+                                <div className="legend-item">
+                                    <div className="legend-color" style={{background: '#8b5cf6'}}></div>
+                                    <span className="legend-label">Node</span>
+                                </div>
+                                <div className="legend-item">
+                                    <div className="legend-color" style={{background: '#ec4899'}}></div>
+                                    <span className="legend-label">Namespace</span>
+                                </div>
+                                <div className="legend-item">
+                                    <div className="legend-color" style={{background: '#ef4444'}}></div>
+                                    <span className="legend-label">Failed/Error</span>
+                                </div>
+                                <h4 style={{fontSize: '12px', margin: '12px 0 8px 0', color: '#a0aec0', textTransform: 'uppercase'}}>Edges (Hover to View)</h4>
+                                <div className="legend-item">
+                                    <div style={{width: '20px', height: '3px', background: '#3b82f6', borderRadius: '2px'}}></div>
+                                    <span className="legend-label">Service → Pod</span>
+                                </div>
+                                <div className="legend-item">
+                                    <div style={{width: '20px', height: '3px', background: '#8b5cf6', borderRadius: '2px'}}></div>
+                                    <span className="legend-label">Pod → Node</span>
+                                </div>
+                                <div className="legend-item">
+                                    <div style={{width: '20px', height: '3px', background: '#ec4899', borderRadius: '2px'}}></div>
+                                    <span className="legend-label">Namespace → Pod</span>
+                                </div>
+                                <div className="legend-item">
+                                    <div style={{width: '20px', height: '3px', background: '#10b981', borderRadius: '2px'}}></div>
+                                    <span className="legend-label">Traffic Flow</span>
+                                </div>
+                            </div>
+
+                            {selectedNode && (
+                                <div className="node-detail-panel">
+                                    <button className="close-btn" onClick={() => setSelectedNode(null)}>✕</button>
+                                    <h3 style={{marginBottom: '16px'}}>{selectedNode.label}</h3>
+                                    <div className="detail-row">
+                                        <span className="detail-label">Type:</span>
+                                        <span className="detail-value">{selectedNode.type}</span>
+                                    </div>
+                                    <div className="detail-row">
+                                        <span className="detail-label">Status:</span>
+                                        <span className={`status-badge status-${selectedNode.status}`}>
+                                            {selectedNode.status}
+                                        </span>
+                                    </div>
+                                    {selectedNode.namespace && (
+                                        <div className="detail-row">
+                                            <span className="detail-label">Namespace:</span>
+                                            <span className="detail-value">{selectedNode.namespace}</span>
+                                        </div>
+                                    )}
+                                    {selectedNode.data?.podIP && (
+                                        <div className="detail-row">
+                                            <span className="detail-label">Pod IP:</span>
+                                            <span className="detail-value">{selectedNode.data.podIP}</span>
+                                        </div>
+                                    )}
+                                    {selectedNode.data?.phase && (
+                                        <div className="detail-row">
+                                            <span className="detail-label">Phase:</span>
+                                            <span className="detail-value">{selectedNode.data.phase}</span>
+                                        </div>
+                                    )}
+                                    {selectedNode.data?.restarts !== undefined && (
+                                        <div className="detail-row">
+                                            <span className="detail-label">Restarts:</span>
+                                            <span className="detail-value">{selectedNode.data.restarts}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>

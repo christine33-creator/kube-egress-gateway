@@ -1,0 +1,249 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-app
+---
+# Redis Database
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: redis
+        tier: database
+    spec:
+      containers:
+      - name: redis
+        image: redis:alpine
+        ports:
+        - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: demo-app
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+# Backend API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-api
+  namespace: demo-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend-api
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: backend-api
+        tier: backend
+    spec:
+      containers:
+      - name: api
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            cat > /etc/nginx/conf.d/default.conf <<EOF
+            server {
+              listen 80;
+              location / {
+                return 200 '{"status":"ok","service":"backend-api","timestamp":"$(date -Iseconds)"}';
+                add_header Content-Type application/json;
+              }
+              location /health {
+                return 200 'healthy';
+              }
+            }
+            EOF
+            nginx -g 'daemon off;'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-api
+  namespace: demo-app
+spec:
+  selector:
+    app: backend-api
+  ports:
+  - port: 8080
+    targetPort: 80
+---
+# Frontend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: demo-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: frontend
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            cat > /etc/nginx/conf.d/default.conf <<EOF
+            server {
+              listen 80;
+              location / {
+                return 200 '<html><body><h1>Demo Frontend</h1><p>Connected to backend</p></body></html>';
+                add_header Content-Type text/html;
+              }
+            }
+            EOF
+            nginx -g 'daemon off;'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: demo-app
+spec:
+  selector:
+    app: frontend
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+---
+# Traffic Generator - simulates requests between services
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-generator
+  namespace: demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traffic-generator
+  template:
+    metadata:
+      labels:
+        app: traffic-generator
+    spec:
+      containers:
+      - name: generator
+        image: curlimages/curl:latest
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            while true; do
+              echo "Calling backend-api..."
+              curl -s http://backend-api.demo-app.svc.cluster.local:8080/ > /dev/null
+              
+              echo "Calling frontend..."
+              curl -s http://frontend.demo-app.svc.cluster.local/ > /dev/null
+              
+              echo "Pinging redis..."
+              nc -zv redis.demo-app.svc.cluster.local 6379 || true
+              
+              sleep 5
+            done
+---
+# Another namespace with microservices
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payment-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-processor
+  namespace: payment-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: payment-processor
+  template:
+    metadata:
+      labels:
+        app: payment-processor
+    spec:
+      containers:
+      - name: processor
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-processor
+  namespace: payment-service
+spec:
+  selector:
+    app: payment-processor
+  ports:
+  - port: 9090
+    targetPort: 80
+---
+# Cross-namespace traffic
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-client
+  namespace: demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-client
+  template:
+    metadata:
+      labels:
+        app: payment-client
+    spec:
+      containers:
+      - name: client
+        image: curlimages/curl:latest
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            while true; do
+              echo "Calling payment service..."
+              curl -s http://payment-processor.payment-service.svc.cluster.local:9090/ > /dev/null || true
+              sleep 10
+            done
